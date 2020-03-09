@@ -30,11 +30,16 @@ Length    | Content
 */
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileSendRequest {
-    file_id: u8,
-    file_type: FileType,
-    file_size: u64,
-    file_unique_id: FileUID,
-    file_name: String,
+    /// Temporary file id.
+    pub file_id: u8,
+    /// Type of transferring file.
+    pub file_type: FileType,
+    /// Total length in bytes of file.
+    pub file_size: u64,
+    /// Unique id of file.
+    pub file_unique_id: FileUID,
+    /// Name of tranferring file.
+    pub file_name: String,
 }
 
 impl FromBytes for FileSendRequest {

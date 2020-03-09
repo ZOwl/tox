@@ -15,7 +15,7 @@ pub use self::file_data::*;
 pub use self::file_send_request::*;
 
 /// Maximum size in bytes of chunk of file data
-const MAX_FILE_DATA_SIZE: usize = 1371;
+pub const MAX_FILE_DATA_SIZE: usize = 1371;
 
 /// Whether I am a sender or receiver of file data packet
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,18 @@ pub enum TransferDirection {
     /// I am a receiver
     Receive
 }
+
+impl TransferDirection {
+    /// Toggle direction
+    pub fn toggle(self) -> Self {
+        if self == TransferDirection::Send {
+            TransferDirection::Receive
+        } else {
+            TransferDirection::Send
+        }
+    }
+}
+
 
 impl FromBytes for TransferDirection {
     named!(from_bytes<TransferDirection>,

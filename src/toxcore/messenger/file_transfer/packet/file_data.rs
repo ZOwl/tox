@@ -28,8 +28,10 @@ Length    | Content
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileData {
-    file_id: u8,
-    data: Vec<u8>,
+    /// temporary file id.
+    pub file_id: u8,
+    /// Payload of this packet.
+    pub data: Vec<u8>,
 }
 
 impl FromBytes for FileData {
