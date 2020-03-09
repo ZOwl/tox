@@ -1,11 +1,9 @@
 # Tox
 
-[![Travis Build Status][travis-badge]][travis-url] [![Appveyor Build Status][appveyor-badge]][appveyor-url] [![Coverage Status][cov-badge]][cov-url] [![Docs][doc-badge]][doc-url] [![Current Crates.io Version][crates-badge]][crates-url] [![Join Gitter][gitter-badge]][gitter-url]
+[![Github Build Status][gh-badge]][gh-url] [![Coverage Status][cov-badge]][cov-url] [![Docs][doc-badge]][doc-url] [![Current Crates.io Version][crates-badge]][crates-url] [![Join Gitter][gitter-badge]][gitter-url]
 
-[travis-badge]: https://api.travis-ci.com/tox-rs/tox.svg?branch=master
-[travis-url]: https://travis-ci.com/tox-rs/tox
-[appveyor-badge]: https://ci.appveyor.com/api/projects/status/m47ke5odayd6enbn/branch/master?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/tox-rs/tox/branch/master
+[gh-badge]: https://github.com/tox-rs/tox/workflows/Rust/badge.svg?branch=master
+[gh-url]: https://github.com/tox-rs/tox/actions?query=branch%3Amaster
 [cov-badge]: https://coveralls.io/repos/github/tox-rs/tox/badge.svg?branch=master
 [cov-url]: https://coveralls.io/github/tox-rs/tox?branch=master
 [doc-badge]: https://docs.rs/tox/badge.svg
@@ -32,7 +30,7 @@ issue / pull request should be filled on the reference repository.
 [CONTRIBUTING.md](/CONTRIBUTING.md).
 
 ## Building
-Fairly simple. First, install [Rust] >= 1.36.0 and a C compiler ([Build Tools
+Fairly simple. First, install [Rust] >= 1.40.0 and a C compiler ([Build Tools
 for Visual Studio][VSBuild] on Windows, GCC or Clang on other platforms).
 
 Then you can build the debug version with
@@ -91,8 +89,6 @@ Right now we are working on the client part.
 (zetok/openmailbox/org) and assimilated by the tox-rs team.
 
 tox-rs has contributions from many users. See [AUTHORS.md](/AUTHORS.md). Thanks everyone!
-
-tox-rs is sponsored by [Zerho LLC](https://zerho.info/).
 
 ## License
 
