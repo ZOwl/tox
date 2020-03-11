@@ -152,6 +152,22 @@ impl RecvPacketError {
     }
 }
 
+// impl From<mpsc::SendError<(PublicKey, Packet)>> for RecvPacketError {
+//     fn from(error: mpsc::SendError<(PublicKey, Packet)>) -> RecvPacketError {
+//         RecvPacketError {
+//             ctx: error.context(RecvPacketErrorKind::SendTo)
+//         }
+//     }
+// }
+
+impl From<mpsc::SendError> for RecvPacketError {
+    fn from(error: mpsc::SendError) -> RecvPacketError {
+        RecvPacketError {
+            ctx: error.context(RecvPacketErrorKind::SendTo)
+        }
+    }
+}
+
 impl From<SendPacketError> for RecvPacketError {
     fn from(error: SendPacketError) -> RecvPacketError {
         RecvPacketError {

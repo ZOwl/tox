@@ -316,17 +316,15 @@ impl FileSending {
     fn recv_from(&self, friend_pk: PublicKey, packet: FileSendingPacket)
         -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let tx = self.recv_file_control_tx.clone();
-        // send_to(&tx, (friend_pk, packet))
-        //     .map_err(RecvPacketError::from)
-        future::ok(())
+        maybe_send_unbounded(Some(tx), (friend_pk, packet))
+            .map_err(RecvPacketError::from)
     }
 
     fn recv_from_data(&self, friend_pk: PublicKey, packet: FileSendingPacket, position: u64)
         -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let tx = self.recv_file_data_tx.clone();
-        // send_to(&tx, (friend_pk, packet, position))
-        //     .map_err(RecvPacketError::from)
-        future::ok(())
+        maybe_send_bounded(Some(tx), (friend_pk, packet, position))
+            .map_err(RecvPacketError::from)
     }
 
     fn send_req_kill(&self, friend_pk: PublicKey, file_id: u8, transfer_direction: TransferDirection, control_type: ControlType)
