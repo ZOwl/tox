@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use futures::{future, Future};
-use futures::future::Either;
-use futures::sync::mpsc::*;
+use futures::future::{Either, TryFutureExt};
+use futures::channel::mpsc::*;
 use bitflags::*;
 
 use crate::toxcore::messenger::file_transfer::packet::{Packet as FileSendingPacket, *};
@@ -139,18 +139,18 @@ impl FileSending {
     /// Send file control request.
     /// File control packet does some control action like Accept, Kill, Seek, Pause.
     fn send_file_control_packet(&self, pk: PublicKey, dir: TransferDirection, file_id: u8, control: ControlType)
-                                -> impl Future<Item=(), Error=SendPacketError> + Send {
+        -> impl Future<Output = Result<(), SendPacketError>> + Send {
         let packet = FileControl::new(dir, file_id, control);
         let mut buf = [0; MAX_CRYPTO_DATA_SIZE];
         match packet.to_bytes((&mut buf, 0)) {
             Ok((data, size)) => {
                 trace!("send file control packet {:?}", data[..size].to_vec().clone());
-                Either::A(self.net_crypto.send_lossless(pk, data[..size].to_vec())
+                Either::Left(self.net_crypto.send_lossless(pk, data[..size].to_vec())
                     .map_err(|e| SendPacketError::from(e)))
             },
             Err(e) => {
                 trace!("send control packet error {:?}", e);
-                Either::B(future::err(SendPacketError::serialize(e)))
+                Either::Right(future::err(SendPacketError::serialize(e)))
             },
         }
     }
@@ -171,65 +171,66 @@ impl FileSending {
     /// Issue seek file control request
     /// This packet is for adjust the offset which is being transferred.
     /// Adjusting offset is needed for loss of file data packet while transferring.
-    pub fn send_file_seek(&self, friend_pk: PublicKey, file_id: u8, position: u64) -> impl Future<Item=(), Error=SendPacketError> + Send {
+    pub fn send_file_seek(&self, friend_pk: PublicKey, file_id: u8, position: u64)
+        -> impl Future<Output = Result<(), SendPacketError>> + Send {
         let mut friend = match self.get_friend(friend_pk) {
             Ok(friend) => friend,
-            Err(e) => return Either::A(future::err(e))
+            Err(e) => return Either::Left(future::err(e))
         };
 
         if let Ok(status) = self.friend_connections.get_connection_status(friend_pk) {
             if !status {
-                return Either::A(future::err(SendPacketErrorKind::NotOnline.into()))
+                return Either::Left(future::err(SendPacketErrorKind::NotOnline.into()))
             }
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NotOnline.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NotOnline.into()))
         }
 
         let files_receiving = friend.files_receiving.clone();
         let ft = if let Some(ft) = files_receiving.get(file_id as usize) {
             ft
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NoFileTransfer.into()))
         };
 
         let ft = if let Some(ft) = ft {
             ft
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NoFileTransfer.into()))
         };
 
         if ft.status != TransferStatus::NotAccepted {
-            return Either::A(future::err(SendPacketErrorKind::NotAccepted.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NotAccepted.into()))
         }
 
         if position >= ft.size {
-            return Either::A(future::err(SendPacketErrorKind::LargerPosition.into()))
+            return Either::Left(future::err(SendPacketErrorKind::LargerPosition.into()))
         }
 
         let mut ft_c = ft.clone();
-        Either::B(self.clone().send_file_control_packet(friend_pk, TransferDirection::Receive, file_id, ControlType::Seek(position))
+        Either::Right(self.clone().send_file_control_packet(friend_pk, TransferDirection::Receive, file_id, ControlType::Seek(position))
             .and_then(move |_| {
                 ft_c.transferred = position;
                 friend.files_receiving[file_id as usize] = Some(ft_c);
-                Ok(())
+                future::ok(())
             })
         )
     }
 
     /// Issue file control request.
     pub fn send_file_control(&self, friend_pk: PublicKey, file_id: u8, dir: TransferDirection, control: ControlType)
-                             -> impl Future<Item=(), Error=SendPacketError> + Send {
+        -> impl Future<Output = Result<(), SendPacketError>> + Send {
         let mut friend = match self.get_friend(friend_pk) {
             Ok(friend) => friend,
-            Err(e) => return Either::A(future::err(e))
+            Err(e) => return Either::Left(future::err(e))
         };
 
         if let Ok(status) = self.friend_connections.get_connection_status(friend_pk) {
             if !status {
-                return Either::A(future::err(SendPacketErrorKind::NotOnline.into()))
+                return Either::Left(future::err(SendPacketErrorKind::NotOnline.into()))
             }
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NotOnline.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NotOnline.into()))
         }
 
         let files = if dir == TransferDirection::Send {
@@ -242,47 +243,47 @@ impl FileSending {
         {
             ft
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NoFileTransfer.into()))
         };
 
         let ft = if let Some(ft) = ft {
             ft
         } else {
-            return Either::A(future::err(SendPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NoFileTransfer.into()))
         };
 
         if ft.status != TransferStatus::NotAccepted {
-            return Either::A(future::err(SendPacketErrorKind::NotAccepted.into()))
+            return Either::Left(future::err(SendPacketErrorKind::NotAccepted.into()))
         }
 
         if control == ControlType::Pause && (ft.pause & PauseStatus::US == PauseStatus::US || ft.status != TransferStatus::Transferring) {
-            return Either::A(future::err(SendPacketErrorKind::InvalidRequest.into()))
+            return Either::Left(future::err(SendPacketErrorKind::InvalidRequest.into()))
         }
 
         let future = if control == ControlType::Accept {
             if ft.status == TransferStatus::Transferring {
                 if !(ft.pause & PauseStatus::US == PauseStatus::US) {
                     if ft.pause & PauseStatus::OTHER == PauseStatus::OTHER {
-                        return Either::A(future::err(SendPacketErrorKind::InvalidRequest2.into()))
+                        return Either::Left(future::err(SendPacketErrorKind::InvalidRequest2.into()))
                     }
-                    return Either::A(future::err(SendPacketErrorKind::InvalidRequest3.into()))
+                    return Either::Left(future::err(SendPacketErrorKind::InvalidRequest3.into()))
                 }
             } else {
                 if ft.status != TransferStatus::NotAccepted {
-                    return Either::A(future::err(SendPacketErrorKind::InvalidRequest4.into()))
+                    return Either::Left(future::err(SendPacketErrorKind::InvalidRequest4.into()))
                 }
                 if dir == TransferDirection::Send {
-                    return Either::A(future::err(SendPacketErrorKind::InvalidRequest5.into()))
+                    return Either::Left(future::err(SendPacketErrorKind::InvalidRequest5.into()))
                 }
             }
 
-            Either::A(self.clone().send_file_control_packet(friend_pk, dir, file_id, control))
+            Either::Left(self.clone().send_file_control_packet(friend_pk, dir, file_id, control))
         } else {
-            Either::B(future::ok(()))
+            Either::Right(future::ok(()))
         };
 
         let mut ft_c = ft.clone();
-        Either::B(future
+        Either::Right(future
             .and_then(move |_| {
                 let mut changed_ft = None;
                 if control == ControlType::Kill {
@@ -306,35 +307,40 @@ impl FileSending {
                 } else {
                     friend.files_receiving[file_id as usize] = changed_ft;
                 }
-                Ok(())
+                // Ok(())
+                future::ok(())
             })
         )
     }
 
-    fn recv_from(&self, friend_pk: PublicKey, packet: FileSendingPacket) -> impl Future<Item=(), Error=RecvPacketError> + Send {
+    fn recv_from(&self, friend_pk: PublicKey, packet: FileSendingPacket)
+        -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let tx = self.recv_file_control_tx.clone();
-        send_to(&tx, (friend_pk, packet))
-            .map_err(RecvPacketError::from)
+        // send_to(&tx, (friend_pk, packet))
+        //     .map_err(RecvPacketError::from)
+        future::ok(())
     }
 
-    fn recv_from_data(&self, friend_pk: PublicKey, packet: FileSendingPacket, position: u64) -> impl Future<Item=(), Error=RecvPacketError> + Send {
+    fn recv_from_data(&self, friend_pk: PublicKey, packet: FileSendingPacket, position: u64)
+        -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let tx = self.recv_file_data_tx.clone();
-        send_to(&tx, (friend_pk, packet, position))
-            .map_err(RecvPacketError::from)
+        // send_to(&tx, (friend_pk, packet, position))
+        //     .map_err(RecvPacketError::from)
+        future::ok(())
     }
 
     fn send_req_kill(&self, friend_pk: PublicKey, file_id: u8, transfer_direction: TransferDirection, control_type: ControlType)
-                     -> impl Future<Item=(), Error=RecvPacketError> + Send {
+        -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         self.send_file_control_packet(friend_pk, transfer_direction, file_id, control_type)
             .map_err(RecvPacketError::from)
     }
 
     /// Handle file control request packet
     pub fn handle_file_control(&self, friend_pk: PublicKey, packet: FileControl)
-                           -> impl Future<Item=(), Error=RecvPacketError> + Send {
+        -> Box<dyn Future<Output = Result<(), RecvPacketError>> + Send> {
         let mut friend = match self.get_friend(friend_pk) {
             Ok(friend) => friend,
-            Err(e) => return Box::new(future::err(e.into())) as Box<dyn Future<Item = _, Error = _> + Send>
+            Err(e) => return Box::new(future::err(e.into())) as Box<dyn Future<Output = Result<(), _>> + Send>
         };
 
         let mut files = if packet.transfer_direction == TransferDirection::Send {
@@ -355,7 +361,7 @@ impl FileSending {
         let mut ft = if let Some(ft) = ft {
             ft
         } else {
-            return Box::new(future::err(RecvPacketErrorKind::NoFileTransfer.into())) as Box<dyn Future<Item = _, Error = _> + Send>
+            return Box::new(future::err(RecvPacketErrorKind::NoFileTransfer.into())) as Box<dyn Future<Output = Result<(), _>> + Send>
         };
 
         let up_packet = FileSendingPacket::FileControl(packet.clone());
@@ -400,20 +406,20 @@ impl FileSending {
             return Box::new(future::err(RecvPacketErrorKind::UnknownControlType.into()))
         }
 
-        Box::new(self.clone().recv_from(friend_pk, up_packet)) as Box<dyn Future<Item = _, Error = _> + Send>
+        Box::new(self.clone().recv_from(friend_pk, up_packet)) as Box<dyn Future<Output = Result<(), _>> + Send>
     }
 
     /// Handle file send request packet
     pub fn handle_file_send_request(&self, friend_pk: PublicKey, packet: FileSendRequest)
-                                -> impl Future<Item=(), Error=RecvPacketError> + Send {
+        -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let mut friend = match self.get_friend(friend_pk) {
             Ok(friend) => friend,
-            Err(e) => return Either::A(future::err(e.into()))
+            Err(e) => return Either::Left(future::err(e.into()))
         };
 
         let files_receiving = friend.files_receiving.clone();
         if None == files_receiving.get(packet.file_id as usize) {
-            return Either::A(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
         }
 
         let mut ft = FileTransfers::new();
@@ -425,32 +431,32 @@ impl FileSending {
 
         friend.files_receiving[packet.file_id as usize] = Some(ft);
 
-        Either::B(self.clone().recv_from(friend_pk, FileSendingPacket::FileSendRequest(packet)))
+        Either::Right(self.clone().recv_from(friend_pk, FileSendingPacket::FileSendRequest(packet)))
     }
 
     /// Handle file data packet
     pub fn handle_file_data(&self, friend_pk: PublicKey, packet: FileData)
-                        -> impl Future<Item=(), Error=RecvPacketError> + Send {
+        -> impl Future<Output = Result<(), RecvPacketError>> + Send {
         let friend = match self.get_friend(friend_pk) {
             Ok(friend) => friend,
-            Err(e) => return Either::A(future::err(e.into()))
+            Err(e) => return Either::Left(future::err(e.into()))
         };
 
         let mut files_receiving = friend.files_receiving.clone();
         let ft = if let Some(ft) = files_receiving.get_mut(packet.file_id as usize) {
             ft
         } else {
-            return Either::A(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
         };
 
         let ft = if let Some(ft) = ft {
             ft
         } else {
-            return Either::A(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
+            return Either::Left(future::err(RecvPacketErrorKind::NoFileTransfer.into()))
         };
 
         if ft.status != TransferStatus::Transferring {
-            return Either::A(future::err(RecvPacketErrorKind::NotTransferring.into()))
+            return Either::Left(future::err(RecvPacketErrorKind::NotTransferring.into()))
         }
 
         let mut data_len = packet.data.len() as u64;
@@ -471,7 +477,7 @@ impl FileSending {
         let ft_c = ft.clone();
         let mut friend_c = friend.clone();
         let self_c = self.clone();
-        Either::B(self.clone().recv_from_data(friend_pk, up_packet, position)
+        Either::Right(self.clone().recv_from_data(friend_pk, up_packet, position)
             .and_then(move |_| {
                 if data_len == 0 {
                     friend_c.files_receiving[packet.file_id as usize] = None;
@@ -479,9 +485,9 @@ impl FileSending {
 
                 if data_len > 0 && (ft_c.transferred >= ft_c.size || data_len != MAX_FILE_DATA_SIZE as u64) {
                     let packet = FileSendingPacket::FileData(FileData::new(packet.file_id, Vec::new()));
-                    Either::A(self_c.recv_from_data(friend_pk, packet, position))
+                    Either::Left(self_c.recv_from_data(friend_pk, packet, position))
                 } else {
-                    Either::B(future::ok(()))
+                    Either::Right(future::ok(()))
                 }
             })
         )
